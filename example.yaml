@@ -1,0 +1,200 @@
+# HAN interface
+# Board revision: 2
+
+esphome:
+  name: nohan
+  platform: ESP8266
+  board: esp12e
+
+external_components:
+  # Import all components in the "components" directory
+  # Use this if you have cloned the repo locally
+  - source: 
+      type: local
+      path: components
+
+  # Use this if you haven't cloned the repository
+  # (Or the repo isn't publically available)
+  #- source:
+  #    type: git
+  #    url: https://github.com/drdeg/noHan
+
+# TXD
+# DHT on GPIO4
+# Temp sensor on GPIO14
+# I2C on GPIO12 (SCL) and GPIO13 (SDA)
+# LED on GPIO2
+
+wifi:
+  ssid: 'ssid-goes-here'
+  password: 'password'
+  # domain: '.local'
+
+mqtt:
+  discovery: True
+
+  # MQTT broker
+  broker: broker.local
+  port: "1883"
+
+  # Add your MQTT Broker authenication here
+  username: nohan
+  password: password
+
+# Enable the web interface
+web_server:
+  port: 80
+
+logger:
+  # Production unit should have level INFO, but DEBUG could be nice during development
+  level: debug
+
+  # UART1 is output only on GPIO2 (LED)
+  hardware_uart: UART1 
+
+# Enable OTA upgrades
+ota:
+
+#output:
+#  - platform: gpio
+#    pin: GPIO2
+#    id: led
+
+switch:
+  - platform: restart
+    name: "Restart"
+    
+binary_sensor:
+  - platform: gpio
+    id: flash_button
+    pin: 
+      number: GPIO0
+      mode: INPUT
+      inverted: True
+
+# Configure the UART that physically interface to the HAN port
+uart:
+  id: uart_bus
+  tx_pin: GPIO01
+  rx_pin: GPIO03
+  baud_rate: 2400
+
+# Configure a HAN bus over the UART
+han:
+  uart_id: uart_bus
+  id: han_bus
+
+sensor:
+  - platform: han
+    name: "HAN UNIX Time"
+    obis_code: '0-0:1.0.0.255'
+    accuracy_decimals: 0
+    icon: mdi:clock
+    filters:
+      # Adjust for local timezone (CET)
+      # The meter usually gives time in local time, here I prefer
+      # UTC
+      - offset: -3600
+
+  # Below are the decoding schemes for swedish OBIS messages
+
+  - platform: han
+    name: "Cumulative active import energy"
+    obis_code: '1-0:1.8.0.255'
+    accuracy_decimals: 5
+    icon: mdi:transmission-tower-export
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    device_class: energy
+    filters:
+      - multiply: 0.001
+
+  - platform: han
+    name: "Cumulative active import energy"
+    obis_code: '1-0:1.8.0.255'
+    accuracy_decimals: 5
+    icon: mdi:transmission-tower-export
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    device_class: energy
+    filters:
+      - multiply: 0.001
+    
+  - platform: han
+    name: "RMS Current L1"
+    obis_code: 1-0:31.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    unit_of_measurement: A
+    filters:
+      - multiply: 0.1
+  - platform: han
+    name: "RMS Current L2"
+    obis_code: 1-0:51.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    unit_of_measurement: A
+    filters:
+      - multiply: 0.1
+  - platform: han
+    name: "RMS Current L3"
+    obis_code: 1-0:71.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    unit_of_measurement: A
+    filters:
+      - multiply: 0.1
+
+  - platform: han
+    name: "RMS Phase Voltage L1"
+    obis_code: 1-0:32.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    unit_of_measurement: V
+    filters:
+      - multiply: 0.1
+  - platform: han
+    name: "RMS Phase Voltage L2"
+    obis_code: 1-0:52.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    unit_of_measurement: V
+    filters:
+      - multiply: 0.1
+  - platform: han
+    name: "RMS Phase Voltage L3"
+    obis_code: 1-0:72.7.0.255
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    unit_of_measurement: V
+    filters:
+      - multiply: 0.1
+
+
+  - platform: han
+    name: "Active power L1"
+    obis_code: 1-0:21.7.0.255
+    accuracy_decimals: 0
+    state_class: measurement
+    device_class: power
+    unit_of_measurement: W
+  - platform: han
+    name: "Active power L2"
+    obis_code: 1-0:41.7.0.255
+    accuracy_decimals: 0
+    state_class: measurement
+    device_class: power
+    unit_of_measurement: W
+  - platform: han
+    name: "Active power L3"
+    obis_code: 1-0:61.7.0.255
+    accuracy_decimals: 0
+    state_class: measurement
+    device_class: power
+    unit_of_measurement: W
