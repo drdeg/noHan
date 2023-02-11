@@ -111,7 +111,9 @@ private:
     uint8_t _destAddressLength;     // Number of bytes in the destination address
     uint8_t _macHeaderSize;         // Number of bytes in the MAC header, excluding the start flag
     bool _clearOnNext;          //< Flag that indicates if the buffers should be cleared on next input
-    const uint8_t _flag = 0x7E;
+    const uint8_t _frameDelimiter = 0x7E;
+    const uint8_t _controlEscapeOctet = 0x7D;
+    const uint8_t _escapeMask = 0x10;
     
     void clearBuffer();
 
@@ -121,6 +123,10 @@ private:
         //return frameFormatType == 0xA0;
         return (frameFormatType & 0xF0) == 0xA0;
     }
+
+    /// @brief Flag that indicates that the received octet should be xored with the escapeMask
+    bool _escape;
+
 };
 
 }   // namespace han

@@ -1,7 +1,7 @@
 #include "hdlc.h"
 
 #include "esphome/core/log.h"
-
+#include "crc.h"
 // #define HDLC_DEBUGING
 
 namespace esphome {
@@ -47,6 +47,7 @@ void HDLCDecoder::clearBuffer(void)
     _destAddressLength = 0;
     _macHeaderSize = 0;
     _clearOnNext = false;
+    _escape = false;
 }
 
 bool HDLCDecoder::push(uint8_t input)
@@ -56,15 +57,30 @@ bool HDLCDecoder::push(uint8_t input)
         clearBuffer();
     }
 
-    if (_bytesInBuffer == 0 && input != _flag)
+    if (_bytesInBuffer == 0 && input != _frameDelimiter)
     {
-        // The buffer is emtpy, wait for the start flag
+        // The buffer is emtpy, wait for the next frame delimiter
         return false;
     }
     else
     {
-        // append the read byte to the buffer
-        _buffer[ _bytesInBuffer++ ] = input;
+        if (_escape)
+        {
+            // append the read byte to the buffer
+            _buffer[ _bytesInBuffer++ ] = input ^ _escapeMask;
+            _escape = false;
+        }
+        else if ( input == _controlEscapeOctet )
+        {
+            ESP_LOGD("hdlc", "Received control escape character");
+            _escape = true;
+            return false;
+        }
+        else
+        {
+            // append the read byte to the buffer
+            _buffer[ _bytesInBuffer++ ] = input;
+        }
 
 #ifdef HDLC_DEBUGING
         if (_macHeaderSize == 0)
@@ -82,15 +98,15 @@ bool HDLCDecoder::push(uint8_t input)
         if (_bytesInBuffer == 1)
         {
             // This was the start flag, need more bytes
-            ESP_LOGD("hdlc", "Received start flag 0x%02X", _flag);
+            ESP_LOGD("hdlc", "Received start flag 0x%02X", _frameDelimiter);
         }
         else if (_bytesInBuffer == 2)
         {
-            if (input == _flag)
+            if (input == _frameDelimiter)
             {
                 // We have received two consecutive flags. This means that the
                 // first one was actually the end flag of the previous frame.
-                ESP_LOGD("hdlc", "Double start flag 0x%02X", _flag);
+                ESP_LOGD("hdlc", "Double start flag 0x%02X", _frameDelimiter);
                 _bytesInBuffer = 1;
             }
             else
@@ -171,37 +187,61 @@ bool HDLCDecoder::push(uint8_t input)
         else if (_bytesInBuffer == (_macHeaderSize+1))
         {
             // The entire MAC header is received, verify the checksum
-            uint16_t checkSum = (_buffer[_bytesInBuffer-1] << 8) | _buffer[_bytesInBuffer-2];
+            uint16_t hcs = (_buffer[_bytesInBuffer-1] << 8) | _buffer[_bytesInBuffer-2];
+            ESP_LOGD("hdlc", "HDLC MAC header is received: size is %d", _bytesInBuffer);
             // TODO: Verify the checksum
-            ESP_LOGD("hdlc", "HDLC MAC header is received: size is %d and checksum is 0x%04X", _bytesInBuffer, checkSum);
+
+            // Compute checksum
+            uint16_t hcsCalc = computeCRC16(0xffff, &_buffer[1], _bytesInBuffer - 3);
+            hcsCalc ^= 0xffff;
+
+            ESP_LOGD("hdlc", "HDLC HCS is calculated to 0x%04X, expected 0x%04X", hcsCalc, hcs);
         }
         else if (_bytesInBuffer == _frameLength + 1)
         {
             // All data is received, verify the checksum
-            uint16_t checkSum = (_buffer[_bytesInBuffer-1] << 8) | _buffer[_bytesInBuffer-2];
-            ESP_LOGD("hdlc", "HDLC data is received");
+            //uint16_t checkSum = (_buffer[_bytesInBuffer-1] << 8) | _buffer[_bytesInBuffer-2];
+            ESP_LOGD("hdlc", "HDLC data is received, next byte should be the frame delimiter.");
         }
         else if (_bytesInBuffer >= _frameLength + 2)
         {
             // This would be the stop flag
-            if (input == _flag)
+            if (input == _frameDelimiter)
             {
                 ESP_LOGD("hdlc", "HDLC frame end flag is received, buffer size is %d", _bytesInBuffer);
 
+                uint16_t fcs = (_buffer[_bytesInBuffer-2] << 8) | _buffer[_bytesInBuffer-3];
+
+                // Compute the FCS lenght is len - 4, (0x7E, FCS, and 0x7E)
+                uint16_t fcsCalc = computeCRC16(0xffff, &_buffer[1], _bytesInBuffer - 4);
+                fcsCalc ^= 0xffff;
+
+                ESP_LOGD("hdlc", "HDLC FCS is calculated to 0x%04X, expected is 0x%04X", fcsCalc, fcs);
+
+                // Start decoding a new message
                 _clearOnNext = true;
-                return true;
+                if (fcsCalc != fcs)
+                {
+                    ESP_LOGW("hdlc", "HDLC message failed FCS check. Discarding message.");
+                    return false;
+                }
+                else
+                {
+                    ESP_LOGI("hdlc", "HDLC message is sane");
+                    return true;
+                }
             }
             else if (_bytesInBuffer >= _frameLength + 10)
             {
                 // Unexpected data
-                ESP_LOGW("hdlc", "Giving up waiting for end flag.");
+                ESP_LOGW("hdlc", "Giving up waiting for end flag. This means we're out of sync.");
                 clearBuffer();
             }
         }
         
         // Debugging
 #ifdef HDLC_DEBUGING
-        if (input == _flag)
+        if (input == _frameDelimiter)
         {
             ESP_LOGD("hdlc", "Found flag in stream at pos %d", _bytesInBuffer-1);
         }
