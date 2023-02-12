@@ -36,6 +36,8 @@ The MAC PDU is
  - 2 bytes: FCS
  - 1 byte : Flag (0x7E)
 
+After some lengthy trial-and-error, I conclude that control escaping with 0x7D is not used.
+
 ### MAC layer address
 
 The length of the MAC address fields can be any number of octets. The LSB in each octets indicates
@@ -114,6 +116,9 @@ private:
     const uint8_t _frameDelimiter = 0x7E;
     const uint8_t _controlEscapeOctet = 0x7D;
     const uint8_t _escapeMask = 0x10;
+
+    const uint16_t _initialCRC = 0xffff;
+    const uint16_t _finalXor = 0xffff;
     
     void clearBuffer();
 

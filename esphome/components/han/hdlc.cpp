@@ -64,23 +64,8 @@ bool HDLCDecoder::push(uint8_t input)
     }
     else
     {
-        if (_escape)
-        {
-            // append the read byte to the buffer
-            _buffer[ _bytesInBuffer++ ] = input ^ _escapeMask;
-            _escape = false;
-        }
-        else if ( input == _controlEscapeOctet )
-        {
-            ESP_LOGD("hdlc", "Received control escape character");
-            _escape = true;
-            return false;
-        }
-        else
-        {
-            // append the read byte to the buffer
-            _buffer[ _bytesInBuffer++ ] = input;
-        }
+        // apend the read byte to the buffer
+        _buffer[ _bytesInBuffer++ ] = input;
 
 #ifdef HDLC_DEBUGING
         if (_macHeaderSize == 0)
@@ -130,13 +115,12 @@ bool HDLCDecoder::push(uint8_t input)
             // Capture the length of the HDLC frame
             // Excluding opening and closing frame flags
             _frameLength = ((_buffer[1] & 0x07) << 8) | _buffer[2];
-            ESP_LOGD("hdlc", "Data length: %d", _frameLength);
+            ESP_LOGD("hdlc", "Decoded HDLC frame length: %d", _frameLength);
             if (_frameLength + 2 > HDLC_BUFFER_SIZE)
             {
                 ESP_LOGW("hdlc", "HDLC frame lager than buffer");
                 clearBuffer();
             }
-            ESP_LOGD("hdlc", "Received frame data length %d", _frameLength);
         }
         else if (_destAddressLength == 0)
         {
@@ -192,10 +176,21 @@ bool HDLCDecoder::push(uint8_t input)
             // TODO: Verify the checksum
 
             // Compute checksum
-            uint16_t hcsCalc = computeCRC16(0xffff, &_buffer[1], _bytesInBuffer - 3);
-            hcsCalc ^= 0xffff;
+            uint16_t hcsCalc = computeCRC16(_initialCRC, &_buffer[1], _bytesInBuffer - 3);
+            hcsCalc ^= _finalXor;
 
-            ESP_LOGD("hdlc", "HDLC HCS is calculated to 0x%04X, expected 0x%04X", hcsCalc, hcs);
+            if (hcsCalc != hcs)
+            {
+                // CRC calculation for the header failed. Restart looking for valid frames.
+                // (We can't trust th length field and risk sync errors!)
+                ESP_LOGW("hdlc", "HDLC HCS Failed: calculated to 0x%04X, expected 0x%04X", hcsCalc, hcs);    
+                _clearOnNext = true;
+            }
+            else
+            {
+                ESP_LOGD("hdlc", "HDLC HCS passed: calculated to 0x%04X, expected 0x%04X", hcsCalc, hcs);
+            }
+            
         }
         else if (_bytesInBuffer == _frameLength + 1)
         {
@@ -205,6 +200,7 @@ bool HDLCDecoder::push(uint8_t input)
         }
         else if (_bytesInBuffer >= _frameLength + 2)
         {
+            // Look for the end of the frame
             // This would be the stop flag
             if (input == _frameDelimiter)
             {
@@ -213,11 +209,10 @@ bool HDLCDecoder::push(uint8_t input)
                 uint16_t fcs = (_buffer[_bytesInBuffer-2] << 8) | _buffer[_bytesInBuffer-3];
 
                 // Compute the FCS lenght is len - 4, (0x7E, FCS, and 0x7E)
-                uint16_t fcsCalc = computeCRC16(0xffff, &_buffer[1], _bytesInBuffer - 4);
-                fcsCalc ^= 0xffff;
-
+                uint16_t fcsCalc = computeCRC16(_initialCRC, &_buffer[1], _bytesInBuffer - 4);
+                fcsCalc ^= _finalXor;
                 ESP_LOGD("hdlc", "HDLC FCS is calculated to 0x%04X, expected is 0x%04X", fcsCalc, fcs);
-
+                
                 // Start decoding a new message
                 _clearOnNext = true;
                 if (fcsCalc != fcs)
@@ -231,11 +226,15 @@ bool HDLCDecoder::push(uint8_t input)
                     return true;
                 }
             }
-            else if (_bytesInBuffer >= _frameLength + 10)
+            else
             {
-                // Unexpected data
-                ESP_LOGW("hdlc", "Giving up waiting for end flag. This means we're out of sync.");
-                clearBuffer();
+                ESP_LOGD("hdlc", "Expected frame delimiter 0x%02X, but received 0x%02X. Last byte was 0x%02X", _frameDelimiter, _buffer[_bytesInBuffer-1], _buffer[_bytesInBuffer-2]);
+                if (_bytesInBuffer >= _frameLength + 10)
+                {
+                    // Unexpected data
+                    ESP_LOGW("hdlc", "Giving up waiting for end flag. This means we're out of sync.");
+                    clearBuffer();
+                }
             }
         }
         
